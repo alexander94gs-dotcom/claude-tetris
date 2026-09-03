@@ -1,0 +1,122 @@
+name: Claude Issue Triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  group: claude-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    if: >-
+      github.event.issue.user.type != 'Bot' &&
+      !contains(join(github.event.issue.labels.*.name, ','), 'no-triage')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write      # necesario: anadir labels + comentar
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Bootstrap triage labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          create() { gh label create "$1" --color "$2" --description "$3" --force; }
+          create "area:gameplay" "1d76db" "Piezas, colision, rotacion, wall kicks, line clear, scoring"
+          create "area:render"   "0e8a16" "Canvas draw, ghost piece, next preview"
+          create "area:input"    "fbca04" "Keydown, controles, pausa"
+          create "area:ui"       "c5def5" "HTML/CSS, layout, textos"
+          create "area:build"    "5319e7" "Workflows, tooling, repo"
+          create "priority:high"   "b60205" "Urgente"
+          create "priority:medium" "d93f0b" "Prioridad normal"
+          create "priority:low"    "0e8a16" "Puede esperar"
+          create "complexity:S" "c2e0c6" "Cambio pequeno"
+          create "complexity:M" "fef2c0" "Cambio medio"
+          create "complexity:L" "f9d0c4" "Cambio grande"
+          create "no-triage"    "ededed" "Excluir del triage automatico de Claude"
+
+      - name: Run Claude triage
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Bash(gh label list:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh api:*)"
+            --max-turns 25
+          prompt: |
+            Eres el clasificador (triage) de issues de este repositorio: ${{ github.repository }}.
+            Tienes que clasificar y diagnosticar el issue #${{ github.event.issue.number }}.
+            Responde en ESPANOL. Manten en ingles los terminos tecnicos, nombres de funciones, rutas y codigo.
+
+            REGLA CENTRAL: en este workflow SOLO diagnosticas. NO escribes codigo, NO editas
+            archivos del proyecto, NO haces commits ni PRs. Tu unico output son labels + un comentario.
+
+            Sigue estos pasos EN ORDEN:
+
+            1. Lee el issue:
+               gh issue view ${{ github.event.issue.number }} --json title,body,labels,author,state
+
+            2. Entiende el codigo. Lee CLAUDE.md y luego los archivos relevantes del juego
+               (game.js, index.html, style.css) con Read/Grep. Toda referencia a codigo que
+               incluyas DEBE ser un file:line que exista de verdad. PROHIBIDO inventar rutas,
+               numeros de linea o nombres de funcion.
+
+            3. Aplica labels. Ejecuta `gh label list` y elige SOLO de esa lista.
+               Aplica EXACTAMENTE:
+                 - 1 label de tipo: bug | enhancement | documentation | question
+                 - 1 label area:*
+                 - 1 label priority:*
+                 - 1 label complexity:*
+               Aplica con: gh issue edit ${{ github.event.issue.number }} --add-label "tipo,area:x,priority:x,complexity:x"
+               NUNCA quites labels que haya puesto una persona.
+
+            4. Publica el diagnostico como UN SOLO comentario que se reescribe en cada edicion.
+               a) Escribe el diagnostico a un archivo, p.ej. /tmp/diag.md. La PRIMERA linea debe ser
+                  exactamente:  <!-- claude-triage -->
+               b) Busca comentario previo de triage:
+                  ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq '.[] | select(.body | contains("<!-- claude-triage -->")) | .id' | head -n1)
+               c) Si ID no esta vacio:
+                  gh api -X PATCH repos/${{ github.repository }}/issues/comments/$ID -F body=@/tmp/diag.md
+                  Si ID esta vacio:
+                  gh issue comment ${{ github.event.issue.number }} --body-file /tmp/diag.md
+
+            FORMATO DEL DIAGNOSTICO (markdown, tras la linea <!-- claude-triage -->):
+
+            ## Diagnostico automatico
+
+            ### Resumen
+            1-2 frases: que pide el issue.
+
+            ### Clasificacion
+            Lista de los 4 labels aplicados, cada uno con una linea de justificacion.
+
+            ### Comportamiento actual vs esperado
+            Para bugs: que hace hoy vs que se espera. Para features: estado actual vs deseado.
+
+            ### Codigo implicado
+            Lista de `file:line` + funcion (ej. `game.js:142` tryRotate). Solo referencias reales.
+
+            ### Hipotesis de causa raiz
+            Para bugs: por que ocurre, con la evidencia del codigo. Para features: donde encaja el cambio.
+
+            ### Plan de solucion propuesto
+            Pasos concretos y ordenados. Para cada paso, que archivo(s) toca.
+
+            ### Criterios de aceptacion
+            Como se verifica que quedo bien. Pasos manuales en el navegador (este repo no tiene tests).
+
+            ### Riesgos / preguntas abiertas
+            Incluye que informacion falta en el issue, si falta alguna.
+
+            ---
+            _Diagnostico generado automaticamente. Comenta `@claude implementa esto` para pasar a codigo._
