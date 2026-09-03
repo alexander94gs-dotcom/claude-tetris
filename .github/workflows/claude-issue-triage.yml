@@ -92,6 +92,12 @@ jobs:
 
             FORMATO DEL DIAGNOSTICO (markdown, tras la linea <!-- claude-triage -->):
 
+            Todo lo que comentes DEBE ser GitHub Flavored Markdown valido que GitHub
+            renderice correctamente: headings con `#`, listas con `-`, codigo inline con
+            backticks, bloques con ```lang, tablas con `|`, y `file:line` en backticks.
+            Deja linea en blanco entre parrafos, listas y bloques. No uses HTML crudo
+            salvo el comentario `<!-- claude-triage -->` de la primera linea.
+
             ## Diagnostico automatico
 
             ### Resumen
